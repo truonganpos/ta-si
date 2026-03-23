@@ -29,6 +29,8 @@
     let activeOrderDetailId = null;
     let checkoutInfoResolver = null;
     let checkoutInfoState = null;
+    let deferredInstallPromptEvent = null;
+    let shortcutPromptTimer = null;
 
     const formatMoney = (num) => num.toLocaleString('vi-VN') + 'đ';
     const parseMoney = (str) => {
@@ -45,6 +47,11 @@
     const STORE_EMAIL_ADDRESS = window.STORE_EMAIL_ADDRESS || 'truonganstore@gmail.com';
     const STORE_MAP_URL = window.STORE_MAP_URL || 'https://maps.google.com/?q=Trường+An+Store';
     const DEFAULT_GUEST_NAME = 'Khách Lẻ Web';
+    const SHORTCUT_PROMPT_DELAY_MS = Number(window.SHORTCUT_PROMPT_DELAY_MS || 90000);
+    const SHORTCUT_PROMPT_AFTER_LOGIN_MS = Number(window.SHORTCUT_PROMPT_AFTER_LOGIN_MS || 8000);
+    const SHORTCUT_PROMPT_COOLDOWN_MS = Number(window.SHORTCUT_PROMPT_COOLDOWN_MS || (3 * 24 * 60 * 60 * 1000));
+    const SHORTCUT_PROMPT_STORAGE_KEY = 'ta_shortcut_prompt_dismissed_at';
+    const SHORTCUT_INSTALLED_STORAGE_KEY = 'ta_shortcut_installed';
     const TELEGRAM_WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycby5el0pzwvokeXVLpdl6b7n4K68moCxhOYZk8chcppgcjv_Ih2dwTeePI3Ts8Tl0_iB/exec';
     // Huong dan webhook Telegram:
     // 1. Mo file telegram_bot.gs va deploy thanh Web App tren Apps Script.
@@ -120,6 +127,118 @@
             : 'Shop ơi, em cần hỗ trợ cấp lại mật khẩu tài khoản.';
         openStoreZalo(message, PASSWORD_RESET_ZALO_PHONE);
     };
+    const isMobileDevice = () => /android|iphone|ipad|ipod/i.test(String(navigator.userAgent || ''));
+    const isIosDevice = () => /iphone|ipad|ipod/i.test(String(navigator.userAgent || ''));
+    const isAppInstalledMode = () => {
+        try {
+            return !!(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+                || window.navigator.standalone === true
+                || localStorage.getItem(SHORTCUT_INSTALLED_STORAGE_KEY) === '1';
+        } catch(error) {
+            return false;
+        }
+    };
+    const markShortcutPromptDismissed = () => {
+        try {
+            localStorage.setItem(SHORTCUT_PROMPT_STORAGE_KEY, String(Date.now()));
+        } catch(error) {}
+    };
+    const hasShortcutPromptCooldown = () => {
+        try {
+            const lastDismissedAt = Number(localStorage.getItem(SHORTCUT_PROMPT_STORAGE_KEY) || 0) || 0;
+            return !!lastDismissedAt && (Date.now() - lastDismissedAt) < SHORTCUT_PROMPT_COOLDOWN_MS;
+        } catch(error) {
+            return false;
+        }
+    };
+    const getShortcutPromptCopy = () => {
+        if (deferredInstallPromptEvent) {
+            return {
+                title: 'Tạo lối tắt ra màn hình chính',
+                desc: 'Bạn muốn ghim web này ra màn hình chính để mở nhanh như ứng dụng không?',
+                hint: 'Bấm nút bên dưới để trình duyệt mở hộp cài lối tắt.'
+            };
+        }
+        if (isIosDevice()) {
+            return {
+                title: 'Thêm web ra màn hình chính',
+                desc: 'Bạn có thể tạo lối tắt để mở web nhanh hơn như ứng dụng.',
+                hint: 'Trên iPhone/iPad: bấm Chia sẻ rồi chọn "Thêm vào Màn hình chính".'
+            };
+        }
+        return {
+            title: 'Thêm lối tắt web',
+            desc: 'Bạn có thể ghim web này ra màn hình chính để vào nhanh hơn.',
+            hint: 'Trên Android: mở menu trình duyệt rồi chọn "Thêm vào màn hình chính" hoặc "Cài đặt ứng dụng".'
+        };
+    };
+    const canPromptForShortcut = () => {
+        if (!isMobileDevice()) return false;
+        if (isAppInstalledMode()) return false;
+        if (hasShortcutPromptCooldown()) return false;
+        return true;
+    };
+    window.closeShortcutInstallPrompt = (options = {}) => {
+        if (options.remindLater !== true) markShortcutPromptDismissed();
+        closeModalShell('shortcut-install-overlay');
+    };
+    window.openShortcutInstallPrompt = () => {
+        if (!canPromptForShortcut()) return;
+        const titleEl = document.getElementById('shortcut-install-title');
+        const descEl = document.getElementById('shortcut-install-desc');
+        const hintEl = document.getElementById('shortcut-install-hint');
+        const actionBtn = document.getElementById('shortcut-install-action-btn');
+        const copy = getShortcutPromptCopy();
+        if (titleEl) titleEl.innerText = copy.title;
+        if (descEl) descEl.innerText = copy.desc;
+        if (hintEl) hintEl.innerText = copy.hint;
+        if (actionBtn) actionBtn.innerText = deferredInstallPromptEvent ? 'Tạo lối tắt ngay' : 'Xem cách thêm';
+        openModalShell('shortcut-install-overlay');
+    };
+    window.triggerShortcutInstallPrompt = async () => {
+        if (deferredInstallPromptEvent) {
+            const promptEvent = deferredInstallPromptEvent;
+            deferredInstallPromptEvent = null;
+            try {
+                await promptEvent.prompt();
+                const choice = await promptEvent.userChoice;
+                if (choice && choice.outcome === 'accepted') {
+                    try {
+                        localStorage.setItem(SHORTCUT_INSTALLED_STORAGE_KEY, '1');
+                    } catch(error) {}
+                    closeModalShell('shortcut-install-overlay');
+                    showToast('Đã gửi yêu cầu tạo lối tắt ra màn hình chính.', 'success');
+                    return;
+                }
+            } catch(error) {}
+        }
+        closeModalShell('shortcut-install-overlay');
+        markShortcutPromptDismissed();
+        showToast(isIosDevice()
+            ? 'Mở nút Chia sẻ của trình duyệt rồi chọn "Thêm vào Màn hình chính".'
+            : 'Mở menu trình duyệt rồi chọn "Thêm vào màn hình chính" để tạo lối tắt.', 'info');
+    };
+    const scheduleShortcutPrompt = (delayMs) => {
+        if (shortcutPromptTimer) clearTimeout(shortcutPromptTimer);
+        if (!canPromptForShortcut()) return;
+        shortcutPromptTimer = setTimeout(() => {
+            shortcutPromptTimer = null;
+            window.openShortcutInstallPrompt();
+        }, Math.max(Number(delayMs || 0) || 0, 1000));
+    };
+    window.scheduleShortcutPromptAfterLogin = () => {
+        scheduleShortcutPrompt(SHORTCUT_PROMPT_AFTER_LOGIN_MS);
+    };
+    window.addEventListener('beforeinstallprompt', (event) => {
+        event.preventDefault();
+        deferredInstallPromptEvent = event;
+    });
+    window.addEventListener('appinstalled', () => {
+        try {
+            localStorage.setItem(SHORTCUT_INSTALLED_STORAGE_KEY, '1');
+        } catch(error) {}
+        closeModalShell('shortcut-install-overlay');
+    });
     window.togglePcFloatingActions = (forceClose) => {
         const container = document.getElementById('pc-floating-links');
         const toggleButton = document.getElementById('pc-floating-toggle');
@@ -1144,6 +1263,7 @@
         shopProducts = [];
 
         loadCachedCatalogFromApp();
+        scheduleShortcutPrompt(SHORTCUT_PROMPT_DELAY_MS);
         const initializeDeferredTabModule = (config = {}, force = false) => {
             const moduleName = String(config.moduleName || '').trim();
             const readyEvent = String(config.readyEvent || '').trim();

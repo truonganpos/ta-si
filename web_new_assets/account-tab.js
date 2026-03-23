@@ -340,6 +340,7 @@
             if (bridge.saveState) bridge.saveState();
             if (typeof window.requestCatalogSyncAfterAuth === 'function') window.requestCatalogSyncAfterAuth();
             if (window.homeTabModule && typeof window.homeTabModule.renderGuestCta === 'function') window.homeTabModule.renderGuestCta();
+            if (typeof window.scheduleShortcutPromptAfterLogin === 'function') window.scheduleShortcutPromptAfterLogin();
             window.closeAuth();
             window.renderAccountTab();
             bridge.showToast && bridge.showToast('Đăng ký thành công!', 'success');
@@ -376,6 +377,7 @@
             if (bridge.saveState) bridge.saveState();
             if (typeof window.requestCatalogSyncAfterAuth === 'function') window.requestCatalogSyncAfterAuth();
             if (window.homeTabModule && typeof window.homeTabModule.renderGuestCta === 'function') window.homeTabModule.renderGuestCta();
+            if (typeof window.scheduleShortcutPromptAfterLogin === 'function') window.scheduleShortcutPromptAfterLogin();
             window.closeAuth();
             window.renderAccountTab();
             if (bridge.showToast) {
